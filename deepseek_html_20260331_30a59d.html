@@ -1,0 +1,977 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>MonntoniGram — киберпанк мессенджер</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="https://unpkg.com/@google/generative-ai@0.21.0/dist/index.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/uuid/8.3.2/uuid.min.js"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: #1a1e2a; }
+        ::-webkit-scrollbar-thumb { background: #00ffc3; border-radius: 10px; }
+        .ripple {
+            position: relative;
+            overflow: hidden;
+        }
+        .ripple:after {
+            content: "";
+            display: block;
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            background-image: radial-gradient(circle, #00ffc3 10%, transparent 10%);
+            background-repeat: no-repeat;
+            background-position: 50%;
+            transform: scale(10);
+            opacity: 0;
+            transition: transform 0.5s, opacity 0.8s;
+        }
+        .ripple:active:after { transform: scale(0); opacity: 0.3; transition: 0s; }
+        .flash-highlight { animation: flashPulse 1.5s ease-out; }
+        @keyframes flashPulse {
+            0% { background-color: rgba(0, 255, 195, 0.5); }
+            70% { background-color: rgba(0, 255, 195, 0.1); }
+            100% { background-color: transparent; }
+        }
+        .message-tail-self::after {
+            content: ''; position: absolute; right: -8px; top: 14px;
+            border-left: 8px solid #00a6a6;
+            border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+        }
+        .message-tail-other::after {
+            content: ''; position: absolute; left: -8px; top: 14px;
+            border-right: 8px solid #1e2a3a;
+            border-top: 6px solid transparent; border-bottom: 6px solid transparent;
+        }
+        .call-modal {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .call-card {
+            background: #11141c;
+            border-radius: 24px;
+            padding: 24px;
+            width: 320px;
+            text-align: center;
+            border: 1px solid #00ffc3;
+        }
+        .modal-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(4px);
+            z-index: 2000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-content {
+            background: #11141c;
+            border-radius: 20px;
+            padding: 20px;
+            width: 340px;
+            max-height: 80vh;
+            overflow-y: auto;
+            border: 1px solid #00ffc3;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        }
+    </style>
+</head>
+<body class="bg-[#0a0c12] text-white font-sans antialiased">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef, useCallback } = React;
+
+        // ---------- ЛОКАЛИЗАЦИЯ ----------
+        const t = {
+            appName: 'MonntoniGram', login: 'Вход', register: 'Регистрация', username: 'Юзернейм',
+            name: 'Имя', password: 'Пароль', haveAccount: 'Уже есть аккаунт?', noAccount: 'Нет аккаунта?',
+            search: 'Поиск', settings: 'Настройки', archived: 'Архив', allChats: 'Все чаты',
+            newGroup: 'Новая группа', newChannel: 'Новый канал', contacts: 'Контакты', calls: 'Звонки',
+            savedMessages: 'Сохранённые сообщения', online: 'онлайн', offline: 'офлайн', typing: 'печатает...',
+            sendMessage: 'Сообщение', recordVoice: 'Записать голос', reply: 'Ответить', edit: 'Редактировать',
+            delete: 'Удалить', forward: 'Переслать', select: 'Выбрать', pin: 'Закрепить', unpin: 'Открепить',
+            archive: 'Архивировать', unarchive: 'Разархивировать', media: 'Медиа', sharedMedia: 'Общие медиа',
+            addContact: 'Добавить контакт', yourPeerId: 'Peer ID:', copyPeerId: 'Скопировать',
+            eeesheriBot: 'Eeesheri AI', micPermissionDenied: '❌ Нет доступа к микрофону',
+            sending: '⌛', sent: '✓', read: '✓✓', stickers: 'Стикеры', copied: 'Скопировано!',
+            logout: 'Выйти', cancel: 'Отмена', forwardTo: 'Переслать в...', deleteMessages: 'Удалить сообщения',
+            today: 'Сегодня', yesterday: 'Вчера', geminiTutorial: '🔑 Как получить API ключ Gemini:',
+            geminiLink: 'https://aistudio.google.com/apikey', call: '📞 Звонок', answer: 'Ответить', decline: 'Отклонить',
+            group: 'Группа', channel: 'Канал', channelInfo: 'Только администратор может писать', admin: 'Админ', member: 'Участник',
+            joinByPeerId: 'Вступить по Peer ID', peerIdPlaceholder: 'Введите Peer ID', join: 'Вступить',
+            description: 'Описание', bio: 'О себе', info: 'Информация', changePhoto: 'Сменить фото',
+            changeName: 'Изменить название', members: 'Участники', kick: 'Исключить', save: 'Сохранить'
+        };
+
+        // ---------- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ----------
+        const getAvatarGradient = (id) => {
+            const gradients = ['from-pink-500 to-purple-500', 'from-cyan-500 to-blue-500', 'from-green-400 to-teal-500', 'from-red-500 to-yellow-500', 'from-indigo-500 to-purple-500'];
+            let index = 0;
+            if (id) for (let i = 0; i < id.length; i++) index += id.charCodeAt(i);
+            return gradients[index % gradients.length];
+        };
+
+        const groupMessagesByDate = (msgs) => {
+            const groups = [];
+            msgs.forEach(msg => {
+                const date = new Date(msg.timestamp);
+                const today = new Date();
+                const yesterday = new Date(today); yesterday.setDate(yesterday.getDate() - 1);
+                let label;
+                if (date.toDateString() === today.toDateString()) label = t.today;
+                else if (date.toDateString() === yesterday.toDateString()) label = t.yesterday;
+                else label = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+                if (groups.length === 0 || groups[groups.length - 1].date !== label) groups.push({ date: label, messages: [] });
+                groups[groups.length - 1].messages.push(msg);
+            });
+            return groups;
+        };
+
+        // ФИКСИРОВАННЫЕ КЛЮЧИ ХРАНИЛИЩА (чтобы данные не терялись)
+        const STORAGE_KEYS = {
+            USERS: 'monntoni_users_final',
+            CURRENT_USER: 'monntoni_current_user_final',
+            CHATS: 'monntoni_chats_final',
+            PEER_ID: 'monntoni_peer_id_final',
+            GEMINI_KEY: 'gemini_key_final'
+        };
+
+        const storage = {
+            getUsers: () => JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]'),
+            saveUsers: (users) => localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users)),
+            getCurrentUser: () => JSON.parse(localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || 'null'),
+            setCurrentUser: (u) => localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(u)),
+            getChats: () => JSON.parse(localStorage.getItem(STORAGE_KEYS.CHATS) || '[]'),
+            setChats: (c) => localStorage.setItem(STORAGE_KEYS.CHATS, JSON.stringify(c)),
+            getMessages: (id) => JSON.parse(localStorage.getItem(`monntoni_msgs_${id}`) || '[]'),
+            setMessages: (id, m) => localStorage.setItem(`monntoni_msgs_${id}`, JSON.stringify(m)),
+            getPeerId: () => localStorage.getItem(STORAGE_KEYS.PEER_ID),
+            setPeerId: (id) => localStorage.setItem(STORAGE_KEYS.PEER_ID, id),
+        };
+
+        // AI (Eeesheri)
+        let genAI = null;
+        const initGemini = (key) => { if (key && window.GoogleGenerativeAI) genAI = new GoogleGenerativeAI(key); };
+        const askEeesheri = async (prompt) => {
+            if (!genAI) return "🔮 Eeesheri: Привет! Добавь API ключ Gemini в настройках профиля. Пока я в демо-режиме. 💚";
+            try {
+                const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+                const res = await model.generateContent(`Ты Eeesheri — киберпанк-помощник в MonntoniGram. Отвечай кратко (1-3 предложения), используй эмодзи, будь дружелюбным. Вопрос: ${prompt}`);
+                return res.response.text();
+            } catch (e) { return "⚠️ Ошибка Eeesheri: " + e.message; }
+        };
+        const playSound = () => { try { new Audio('data:audio/wav;base64,U3RlYWx0aCBpcyBhIHNvdW5k').play().catch(e => {}); } catch (e) {} };
+
+        // Запрос разрешений
+        const requestPermissions = async () => {
+            try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch(e) {}
+        };
+        requestPermissions();
+
+        // ---------- КОМПОНЕНТЫ ----------
+        const Avatar = ({ user, size = 10, onEdit, editable = false }) => {
+            const sz = `w-${size} h-${size}`;
+            const handleClick = () => { if (editable && onEdit) onEdit(); };
+            if (user.avatar) return <img src={user.avatar} className={`${sz} rounded-full object-cover ${editable ? 'cursor-pointer' : ''}`} onClick={handleClick} />;
+            const grad = getAvatarGradient(user.id);
+            const init = (user.name?.charAt(0) || user.username?.charAt(0) || '?').toUpperCase();
+            return <div onClick={handleClick} className={`${sz} rounded-full bg-gradient-to-br ${grad} flex items-center justify-center text-white font-bold text-sm ${editable ? 'cursor-pointer' : ''}`}>{init}</div>;
+        };
+
+        const VoicePlayer = ({ url, duration }) => {
+            const [playing, setPlaying] = useState(false);
+            const audio = useRef(null);
+            useEffect(() => {
+                audio.current = new Audio(url);
+                audio.current.onended = () => setPlaying(false);
+                return () => audio.current?.pause();
+            }, [url]);
+            const toggle = () => { if (playing) audio.current.pause(); else audio.current.play(); setPlaying(!playing); };
+            return <div className="flex items-center gap-2"><button onClick={toggle} className="text-white">{playing ? '⏸️' : '▶️'}</button><span className="text-xs">{Math.floor(duration)} сек</span></div>;
+        };
+
+        const MessageBubble = ({ msg, prevSender, isLastInGroup, onReply, onEdit, onDelete, onForward, onSelect, selected, isSelectMode, highlight }) => {
+            const isSelf = msg.isSelf;
+            const statusIcon = msg.status === 'sending' ? t.sending : msg.status === 'sent' ? t.sent : t.read;
+            return (
+                <div className={`flex ${isSelf ? 'justify-end' : 'justify-start'} mb-1 group relative ${highlight ? 'flash-highlight' : ''}`} onClick={(e) => isSelectMode && onSelect(msg.id)}>
+                    {!isSelf && !prevSender && <Avatar user={{ id: msg.senderId, name: msg.senderName }} size={8} />}
+                    <div className={`max-w-[70%] ${!isSelf && !prevSender ? 'ml-2' : 'ml-8'}`}>
+                        <div className={`relative px-3 py-2 rounded-2xl ${isSelf ? 'bg-[#00a6a6] text-white rounded-br-none' : 'bg-[#1e2a3a] text-gray-200 rounded-bl-none'} ${isLastInGroup && (isSelf ? 'message-tail-self' : 'message-tail-other')}`}>
+                            {msg.replyTo && <div className="text-xs opacity-70 border-l-2 border-[#00ffc3] pl-1 mb-1">↩️ {msg.replyTo.text}</div>}
+                            {msg.text && <p className="text-sm break-words">{msg.text}</p>}
+                            {msg.image && <img src={msg.image} className="max-w-full rounded-lg mt-1 max-h-48" />}
+                            {msg.isVoice && msg.voiceUrl && <VoicePlayer url={msg.voiceUrl} duration={msg.voiceDuration} />}
+                            <div className="flex justify-end items-center gap-1 mt-1">
+                                <span className="text-[10px] text-gray-300">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                {isSelf && <span className="text-xs text-[#00ffc3]">{statusIcon}</span>}
+                            </div>
+                        </div>
+                    </div>
+                    {!isSelectMode && (
+                        <div className="absolute right-2 top-0 hidden group-hover:flex bg-black/60 rounded p-1 gap-1 z-20">
+                            <button onClick={() => onReply(msg)} className="text-white text-xs px-1">↩️</button>
+                            {isSelf && <button onClick={() => onEdit(msg)} className="text-white text-xs px-1">✏️</button>}
+                            <button onClick={() => onDelete(msg)} className="text-white text-xs px-1">🗑️</button>
+                            <button onClick={() => onForward(msg)} className="text-white text-xs px-1">↪️</button>
+                            <button onClick={() => onSelect(msg.id)} className="text-white text-xs px-1">✅</button>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        // ---------- ОСНОВНОЙ КОМПОНЕНТ ----------
+        const App = () => {
+            const [currentUser, setCurrentUser] = useState(null);
+            const [chats, setChats] = useState([]);
+            const [archived, setArchived] = useState([]);
+            const [activeChat, setActiveChat] = useState(null);
+            const [messages, setMessages] = useState([]);
+            const [search, setSearch] = useState('');
+            const [profileOpen, setProfileOpen] = useState(false);
+            const [peerConn, setPeerConn] = useState({});
+            const [myPeer, setMyPeer] = useState(null);
+            const [typing, setTyping] = useState({});
+            const [geminiKey, setGeminiKey] = useState(localStorage.getItem(STORAGE_KEYS.GEMINI_KEY) || '');
+            const [showAddContact, setShowAddContact] = useState(false);
+            const [forwardDialog, setForwardDialog] = useState(null);
+            const [showArchived, setShowArchived] = useState(false);
+            const [callDialog, setCallDialog] = useState(null);
+            const [joinDialog, setJoinDialog] = useState(false);
+            const [joinId, setJoinId] = useState('');
+            const [infoModal, setInfoModal] = useState(null);
+            const [replyTo, setReplyTo] = useState(null);
+            const [selectMode, setSelectMode] = useState(false);
+            const [selectedMsgs, setSelectedMsgs] = useState([]);
+            const [input, setInput] = useState('');
+            const [rec, setRec] = useState(false);
+            const [micErr, setMicErr] = useState(false);
+            const recRef = useRef(null);
+            const chunks = useRef([]);
+            const [showStickers, setShowStickers] = useState(false);
+
+            // Загрузка пользователя
+            useEffect(() => {
+                const u = storage.getCurrentUser();
+                if (u) {
+                    setCurrentUser(u);
+                    const all = storage.getChats();
+                    setChats(all.filter(c => !c.archived));
+                    setArchived(all.filter(c => c.archived));
+                }
+                const savedKey = localStorage.getItem(STORAGE_KEYS.GEMINI_KEY);
+                if (savedKey) setGeminiKey(savedKey);
+                if (savedKey) initGemini(savedKey);
+            }, []);
+
+            // Сохранение чатов при изменении
+            useEffect(() => {
+                if (!currentUser) return;
+                const all = [...chats.map(c => ({ ...c, archived: false })), ...archived.map(c => ({ ...c, archived: true }))];
+                storage.setChats(all);
+            }, [chats, archived]);
+
+            // Проверка наличия бота Eeesheri при загрузке пользователя
+            useEffect(() => {
+                if (!currentUser) return;
+                const allChats = storage.getChats();
+                const hasBot = allChats.some(c => c.user.peerId === 'eeesheri_bot');
+                if (!hasBot) {
+                    const botChat = {
+                        id: uuid.v4(),
+                        type: 'bot',
+                        user: {
+                            id: 'eeesheri_bot',
+                            name: 'Eeesheri AI',
+                            username: 'eeesheri',
+                            peerId: 'eeesheri_bot',
+                            status: 'online',
+                            description: 'ИИ-помощник',
+                            avatar: null
+                        },
+                        lastMessage: 'Привет! Я Eeesheri, твой кибер-помощник 💚',
+                        lastMessageTime: Date.now(),
+                        unreadCount: 0
+                    };
+                    storage.setChats([botChat, ...allChats]);
+                    const updatedAll = storage.getChats();
+                    setChats(updatedAll.filter(c => !c.archived));
+                    setArchived(updatedAll.filter(c => c.archived));
+                }
+            }, [currentUser]);
+
+            // PeerJS
+            useEffect(() => {
+                if (!currentUser) return;
+                let pid = storage.getPeerId();
+                if (!pid) { pid = uuid.v4(); storage.setPeerId(pid); }
+                const peer = new Peer(pid);
+                peer.on('open', () => console.log('Peer ready'));
+                peer.on('connection', conn => {
+                    conn.on('data', data => handleData(conn, data));
+                    setPeerConn(p => ({ ...p, [conn.peer]: conn }));
+                });
+                peer.on('call', call => {
+                    navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+                        .then(stream => {
+                            call.answer(stream);
+                            setCallDialog({ type: 'incoming', peerId: call.peer, call, stream });
+                        })
+                        .catch(e => alert('Микрофон не доступен'));
+                });
+                setMyPeer(peer);
+                return () => peer.destroy();
+            }, [currentUser]);
+
+            const handleData = (conn, data) => {
+                if (data.type === 'handshake') {
+                    const { name, username, peerId, description, avatar } = data;
+                    if (![...chats, ...archived].find(c => c.user.peerId === peerId)) {
+                        const newChat = { id: uuid.v4(), type: 'contact', user: { id: peerId, name, username, peerId, status: 'online', description: description || '', avatar }, lastMessage: 'Подключено', lastMessageTime: Date.now(), unreadCount: 0 };
+                        setChats(prev => [newChat, ...prev]);
+                    } else {
+                        const upd = list => list.map(c => c.user.peerId === peerId ? { ...c, user: { ...c.user, status: 'online', description: description || c.user.description, avatar: avatar || c.user.avatar } } : c);
+                        setChats(upd); setArchived(upd);
+                    }
+                } else if (data.type === 'text') {
+                    const target = [...chats, ...archived].find(c => c.user.peerId === conn.peer);
+                    if (target) {
+                        const msg = { id: uuid.v4(), senderId: conn.peer, senderName: data.senderName, text: data.text, timestamp: Date.now(), status: 'read', isSelf: false };
+                        saveMsg(target.id, msg);
+                        if (activeChat?.id !== target.id) playSound();
+                    }
+                } else if (data.type === 'typing') {
+                    setTyping(p => ({ ...p, [data.chatId]: true }));
+                    setTimeout(() => setTyping(p => ({ ...p, [data.chatId]: false })), 2000);
+                } else if (data.type === 'callRequest') {
+                    setCallDialog({ type: 'incoming', peerId: conn.peer, peerConn: conn });
+                }
+            };
+
+            const saveMsg = (chatId, msg) => {
+                const msgs = storage.getMessages(chatId);
+                msgs.push(msg);
+                storage.setMessages(chatId, msgs);
+                if (activeChat?.id === chatId) setMessages([...msgs]);
+                const upd = list => list.map(c => c.id === chatId ? { ...c, lastMessage: msg.text || 'Медиа', lastMessageTime: msg.timestamp, unreadCount: activeChat?.id !== chatId ? c.unreadCount + 1 : 0 } : c);
+                setChats(upd); setArchived(upd);
+            };
+
+            const sendMessage = async (text, media = null, isVoice = false, dur = 0) => {
+                if (!text?.trim() && !media && !isVoice) return;
+                const chat = activeChat;
+                if (!chat) return;
+                // Channel: only admin can write
+                if (chat.isChannel && chat.admin !== currentUser.id) {
+                    alert(t.channelInfo);
+                    return;
+                }
+                const isEe = chat.user.peerId === 'eeesheri_bot';
+                const newMsg = {
+                    id: uuid.v4(), senderId: currentUser.id, senderName: currentUser.name,
+                    text: text || (isVoice ? '🎤 Голосовое' : ''), image: media && !isVoice ? media : null,
+                    isVoice, voiceUrl: isVoice ? media : null, voiceDuration: dur,
+                    timestamp: Date.now(), status: 'sending', isSelf: true,
+                    replyTo: replyTo ? { id: replyTo.id, text: replyTo.text } : null
+                };
+                const updated = [...messages, newMsg];
+                setMessages(updated);
+                storage.setMessages(chat.id, updated);
+                setReplyTo(null);
+                setInput('');
+
+                if (isEe) {
+                    const aiResp = await askEeesheri(text);
+                    const aiMsg = { id: uuid.v4(), senderId: 'eeesheri_bot', senderName: 'Eeesheri AI', text: aiResp, timestamp: Date.now(), status: 'read', isSelf: false };
+                    const withAI = [...updated, aiMsg];
+                    setMessages(withAI);
+                    storage.setMessages(chat.id, withAI);
+                } else if (chat.user.peerId && peerConn[chat.user.peerId]) {
+                    peerConn[chat.user.peerId].send({ type: 'text', text: newMsg.text, senderId: currentUser.id, senderName: currentUser.name });
+                    newMsg.status = 'sent';
+                } else newMsg.status = 'sent';
+                storage.setMessages(chat.id, updated.map(m => m.id === newMsg.id ? newMsg : m));
+                if (activeChat?.id === chat.id) setMessages(storage.getMessages(chat.id));
+            };
+
+            const startCall = (peerId) => {
+                if (!myPeer) return;
+                navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+                    .then(stream => {
+                        const call = myPeer.call(peerId, stream);
+                        call.on('stream', remoteStream => {
+                            const audio = new Audio();
+                            audio.srcObject = remoteStream;
+                            audio.play();
+                        });
+                        setCallDialog({ type: 'outgoing', peerId, call, stream });
+                    })
+                    .catch(e => alert('Микрофон недоступен'));
+            };
+
+            const answerCall = (dialog) => {
+                if (dialog.call) {
+                    navigator.mediaDevices.getUserMedia({ audio: true })
+                        .then(stream => {
+                            dialog.call.answer(stream);
+                            dialog.call.on('stream', remoteStream => {
+                                const audio = new Audio();
+                                audio.srcObject = remoteStream;
+                                audio.play();
+                            });
+                            setCallDialog(null);
+                        });
+                } else if (dialog.peerConn) {
+                    startCall(dialog.peerId);
+                    setCallDialog(null);
+                } else setCallDialog(null);
+            };
+
+            const createGroupOrChannel = (type, name) => {
+                if (!name) return;
+                const id = uuid.v4();
+                const newChat = {
+                    id, type, name,
+                    user: { id, name, username: name, avatar: null, status: 'online', peerId: id, description: '' },
+                    isGroup: type === 'group', isChannel: type === 'channel',
+                    members: type === 'group' ? [currentUser.id] : [],
+                    admin: currentUser.id,
+                    lastMessage: 'Создан', lastMessageTime: Date.now(), unreadCount: 0
+                };
+                setChats(prev => [newChat, ...prev]);
+            };
+
+            const joinByPeerId = () => {
+                if (!joinId.trim()) return;
+                const existing = [...chats, ...archived].find(c => c.user.peerId === joinId);
+                if (existing) {
+                    alert('Вы уже участник этого чата/канала');
+                    setJoinDialog(false);
+                    setJoinId('');
+                    return;
+                }
+                // Присоединение по Peer ID: добавляем как участника (не админ)
+                const newChat = {
+                    id: uuid.v4(),
+                    type: 'contact',
+                    user: { id: joinId, name: `Чат ${joinId.slice(0,8)}`, username: joinId, peerId: joinId, status: 'online', description: '' },
+                    lastMessage: 'Вы вступили', lastMessageTime: Date.now(), unreadCount: 0,
+                    isGroup: true,
+                    members: [currentUser.id],
+                    admin: joinId
+                };
+                setChats(prev => [newChat, ...prev]);
+                setJoinDialog(false);
+                setJoinId('');
+                if (myPeer) myPeer.connect(joinId);
+            };
+
+            // Функции управления группой/каналом
+            const updateChatAvatar = (chatId, file) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const avatar = e.target.result;
+                    const updateList = (list) => list.map(c => c.id === chatId ? { ...c, user: { ...c.user, avatar } } : c);
+                    setChats(updateList);
+                    setArchived(updateList);
+                    if (activeChat?.id === chatId) setActiveChat(prev => ({ ...prev, user: { ...prev.user, avatar } }));
+                };
+                reader.readAsDataURL(file);
+            };
+
+            const updateChatName = (chatId, newName) => {
+                if (!newName) return;
+                const updateList = (list) => list.map(c => c.id === chatId ? { ...c, name: newName, user: { ...c.user, name: newName } } : c);
+                setChats(updateList);
+                setArchived(updateList);
+                if (activeChat?.id === chatId) setActiveChat(prev => ({ ...prev, name: newName, user: { ...prev.user, name: newName } }));
+            };
+
+            const updateChatDescription = (chatId, desc) => {
+                const updateList = (list) => list.map(c => c.id === chatId ? { ...c, user: { ...c.user, description: desc } } : c);
+                setChats(updateList);
+                setArchived(updateList);
+                if (activeChat?.id === chatId) setActiveChat(prev => ({ ...prev, user: { ...prev.user, description: desc } }));
+            };
+
+            const kickMember = (chatId, memberId) => {
+                const chat = [...chats, ...archived].find(c => c.id === chatId);
+                if (!chat || !chat.isGroup || chat.admin !== currentUser.id) return;
+                const newMembers = chat.members.filter(m => m !== memberId);
+                const updateList = (list) => list.map(c => c.id === chatId ? { ...c, members: newMembers } : c);
+                setChats(updateList);
+                setArchived(updateList);
+                if (activeChat?.id === chatId) setActiveChat(prev => ({ ...prev, members: newMembers }));
+                alert('Участник исключён');
+            };
+
+            const updateUserAvatar = (file) => {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const avatar = e.target.result;
+                    const updatedUser = { ...currentUser, avatar };
+                    storage.setCurrentUser(updatedUser);
+                    setCurrentUser(updatedUser);
+                    const updateChats = (list) => list.map(c => c.user.id === currentUser.id ? { ...c, user: { ...c.user, avatar } } : c);
+                    setChats(updateChats);
+                    setArchived(updateChats);
+                    if (activeChat?.user.id === currentUser.id) setActiveChat(prev => ({ ...prev, user: { ...prev.user, avatar } }));
+                };
+                reader.readAsDataURL(file);
+            };
+
+            const updateUserDescription = (desc) => {
+                const updated = { ...currentUser, description: desc };
+                storage.setCurrentUser(updated);
+                setCurrentUser(updated);
+            };
+
+            const startRec = async () => {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    const r = new MediaRecorder(stream);
+                    r.ondataavailable = e => chunks.current.push(e.data);
+                    r.onstop = () => {
+                        const blob = new Blob(chunks.current, { type: 'audio/webm' });
+                        const fr = new FileReader();
+                        fr.onloadend = () => sendMessage('', fr.result, true, 5);
+                        fr.readAsDataURL(blob);
+                        chunks.current = [];
+                        stream.getTracks().forEach(t => t.stop());
+                    };
+                    r.start();
+                    recRef.current = r;
+                    setRec(true);
+                    setMicErr(false);
+                    setTimeout(() => stopRec(), 30000);
+                } catch (e) { setMicErr(true); alert(t.micPermissionDenied); }
+            };
+            const stopRec = () => { recRef.current?.stop(); setRec(false); };
+
+            if (!currentUser) return <AuthScreen onLogin={setCurrentUser} />;
+
+            return (
+                <div className="flex h-screen bg-[#0a0c12]">
+                    {/* Боковая панель */}
+                    <div className="w-80 bg-[#11141c] border-r border-[#1f2a3a] flex flex-col">
+                        <div className="p-3 flex justify-between">
+                            <div className="flex gap-2">
+                                <button onClick={() => setShowAddContact(true)} className="text-[#00ffc3] text-xl">➕</button>
+                                <button onClick={() => setJoinDialog(true)} className="text-[#00ffc3] text-sm bg-black/30 px-2 py-1 rounded">🔍 {t.joinByPeerId}</button>
+                            </div>
+                            <h1 className="font-bold">{t.appName}</h1>
+                            <button onClick={() => setProfileOpen(true)}>👤</button>
+                        </div>
+                        <div className="px-2 mb-2">
+                            <input placeholder={t.search} className="w-full bg-black/30 rounded-full px-4 py-2 text-sm" value={search} onChange={e => setSearch(e.target.value)} />
+                        </div>
+                        <div className="px-2 flex gap-2 mb-2">
+                            <button onClick={() => createGroupOrChannel('group', prompt('Название группы'))} className="bg-[#00ffc3]/20 px-2 py-1 rounded text-xs">{t.newGroup}</button>
+                            <button onClick={() => createGroupOrChannel('channel', prompt('Название канала'))} className="bg-[#00ffc3]/20 px-2 py-1 rounded text-xs">{t.newChannel}</button>
+                        </div>
+                        <div className="flex-1 overflow-auto">
+                            <div className="px-3 py-1 flex justify-between text-sm">
+                                <button onClick={() => setShowArchived(false)} className={!showArchived ? 'text-[#00ffc3]' : ''}>{t.allChats}</button>
+                                <button onClick={() => setShowArchived(true)} className={showArchived ? 'text-[#00ffc3]' : ''}>{t.archived} ({archived.length})</button>
+                            </div>
+                            {(showArchived ? archived : chats).filter(c => c.user.name.toLowerCase().includes(search.toLowerCase())).map(chat => (
+                                <div key={chat.id} onClick={() => { setActiveChat(chat); setMessages(storage.getMessages(chat.id)); setSelectMode(false); setSelectedMsgs([]); setReplyTo(null); }} className={`flex items-center px-3 py-2 cursor-pointer ripple ${activeChat?.id === chat.id ? 'bg-[#00a6a6]/20 border-l-4 border-[#00ffc3]' : 'hover:bg-white/5'}`}>
+                                    <Avatar user={chat.user} size={12} />
+                                    <div className="ml-3 flex-1">
+                                        <div className="flex justify-between">
+                                            <span className="font-medium">
+                                                {chat.user.name}
+                                                {chat.isGroup && <span className="text-xs ml-1 text-gray-400">👥</span>}
+                                                {chat.isChannel && <span className="text-xs ml-1 text-gray-400">📢</span>}
+                                            </span>
+                                            <span className="text-xs text-gray-400">{new Date(chat.lastMessageTime).toLocaleTimeString()}</span>
+                                        </div>
+                                        <div className="text-sm text-gray-400 truncate">
+                                            {chat.isChannel ? t.channel : (chat.isGroup ? `${chat.members?.length || 1} ${t.member}` : (typing[chat.id] ? t.typing : chat.lastMessage))}
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-1">
+                                        <button onClick={(e) => { e.stopPropagation(); 
+                                            if (showArchived) {
+                                                setArchived(prev => prev.filter(c => c.id !== chat.id));
+                                                setChats(prev => [chat, ...prev]);
+                                            } else {
+                                                setChats(prev => prev.filter(c => c.id !== chat.id));
+                                                setArchived(prev => [chat, ...prev]);
+                                            }
+                                        }} className="text-gray-400">📁</button>
+                                        {chat.user.peerId && chat.user.peerId !== 'eeesheri_bot' && !chat.isGroup && !chat.isChannel && 
+                                            <button onClick={(e) => { e.stopPropagation(); startCall(chat.user.peerId); }} className="text-[#00ffc3]">📞</button>
+                                        }
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* Основная область чата */}
+                    {activeChat ? (
+                        <div className="flex-1 flex flex-col bg-[#0e1117]">
+                            <div className="p-3 border-b border-[#1f2a3a] flex justify-between items-center">
+                                <div className="flex items-center">
+                                    <Avatar user={activeChat.user} size={10} editable={activeChat.isGroup || activeChat.isChannel ? activeChat.admin === currentUser.id : false} onEdit={() => { const input = document.createElement('input'); input.type='file'; input.accept='image/*'; input.onchange=e => updateChatAvatar(activeChat.id, e.target.files[0]); input.click(); }} />
+                                    <div className="ml-3">
+                                        <div className="font-bold flex items-center gap-2">
+                                            {activeChat.user.name}
+                                            {activeChat.isGroup && <span className="text-xs text-gray-400">👥</span>}
+                                            {activeChat.isChannel && <span className="text-xs text-gray-400">📢</span>}
+                                            <button onClick={() => setInfoModal(activeChat)} className="text-gray-400 hover:text-white text-sm">ℹ️</button>
+                                        </div>
+                                        <div className="text-xs text-gray-400">
+                                            {activeChat.isChannel ? t.channel : (activeChat.isGroup ? `${activeChat.members?.length || 1} ${t.member}` : (activeChat.user.status === t.online ? t.online : t.offline))}
+                                        </div>
+                                    </div>
+                                </div>
+                                <div className="flex gap-2">
+                                    {(activeChat.isGroup || activeChat.isChannel) && activeChat.admin === currentUser.id && (
+                                        <>
+                                            <button onClick={() => { const newName = prompt(t.changeName, activeChat.user.name); if (newName) updateChatName(activeChat.id, newName); }} className="text-gray-400 text-xs">✏️</button>
+                                            <button onClick={() => { const newDesc = prompt(t.description, activeChat.user.description || ''); if (newDesc !== null) updateChatDescription(activeChat.id, newDesc); }} className="text-gray-400 text-xs">📝</button>
+                                        </>
+                                    )}
+                                    {!activeChat.isGroup && !activeChat.isChannel && activeChat.user.peerId !== 'eeesheri_bot' && (
+                                        <button onClick={() => startCall(activeChat.user.peerId)} className="text-[#00ffc3]">📞</button>
+                                    )}
+                                </div>
+                            </div>
+                            <div className="flex-1 overflow-auto p-4 space-y-4">
+                                {groupMessagesByDate(messages).map((group, idx) => (
+                                    <div key={idx}>
+                                        <div className="sticky top-2 flex justify-center"><span className="bg-black/60 backdrop-blur px-3 py-1 rounded-full text-xs">{group.date}</span></div>
+                                        {group.messages.map((msg, i) => (
+                                            <MessageBubble
+                                                key={msg.id}
+                                                msg={msg}
+                                                prevSender={i > 0 && group.messages[i - 1].senderId === msg.senderId}
+                                                isLastInGroup={i === group.messages.length - 1 || group.messages[i + 1]?.senderId !== msg.senderId}
+                                                onReply={setReplyTo}
+                                                onEdit={() => {}}
+                                                onDelete={() => {}}
+                                                onForward={setForwardDialog}
+                                                onSelect={(id) => setSelectedMsgs(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id])}
+                                                selected={selectedMsgs.includes(msg.id)}
+                                                isSelectMode={selectMode}
+                                                highlight={false}
+                                            />
+                                        ))}
+                                    </div>
+                                ))}
+                            </div>
+                            {selectMode && (
+                                <div className="p-2 bg-[#1e2a3a] flex justify-between">
+                                    <span>Выбрано: {selectedMsgs.length}</span>
+                                    <div><button className="bg-red-500 px-2 rounded">{t.deleteMessages}</button><button onClick={() => { setSelectMode(false); setSelectedMsgs([]); }}>✖️</button></div>
+                                </div>
+                            )}
+                            {replyTo && (
+                                <div className="px-4 py-1 bg-black/40 flex justify-between">
+                                    <span>Ответ: {replyTo.text}</span>
+                                    <button onClick={() => setReplyTo(null)}>✖️</button>
+                                </div>
+                            )}
+                            <div className="p-3 border-t border-[#1f2a3a] flex items-center gap-2">
+                                <button onClick={() => setShowStickers(!showStickers)}>😊</button>
+                                <textarea className="flex-1 bg-[#1e2a3a] rounded-2xl px-4 py-2 resize-none max-h-32" rows="1" placeholder={t.sendMessage} value={input} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(input); } }} />
+                                <button onMouseDown={startRec} onMouseUp={stopRec} className={`text-2xl ${rec ? 'text-red-500 animate-pulse' : 'text-[#00ffc3]'}`}>🎙️</button>
+                                <button onClick={() => { sendMessage(input); }} className="bg-[#00ffc3] text-black rounded-full p-2">➤</button>
+                            </div>
+                            {showStickers && (
+                                <div className="p-2 flex gap-2 overflow-x-auto border-t border-[#1f2a3a]">
+                                    <span className="text-2xl cursor-pointer" onClick={() => sendMessage('😀')}>😀</span>
+                                    <span className="text-2xl cursor-pointer" onClick={() => sendMessage('❤️')}>❤️</span>
+                                    <span className="text-2xl cursor-pointer" onClick={() => sendMessage('🔥')}>🔥</span>
+                                    <span className="text-2xl cursor-pointer" onClick={() => sendMessage('👍')}>👍</span>
+                                    <span className="text-2xl cursor-pointer" onClick={() => sendMessage('🎉')}>🎉</span>
+                                </div>
+                            )}
+                            {micErr && <div className="text-xs text-red-400 px-4 pb-2">{t.micPermissionDenied}</div>}
+                        </div>
+                    ) : (
+                        <div className="flex-1 flex items-center justify-center text-gray-500">Выберите чат</div>
+                    )}
+
+                    {/* Модалки */}
+                    {profileOpen && (
+                        <ProfileDrawer
+                            user={currentUser}
+                            peerId={myPeer?.id || storage.getPeerId()}
+                            chats={[...chats, ...archived]}
+                            onClose={() => setProfileOpen(false)}
+                            geminiKey={geminiKey}
+                            setGeminiKey={(key) => { setGeminiKey(key); localStorage.setItem(STORAGE_KEYS.GEMINI_KEY, key); initGemini(key); }}
+                            onLogout={() => { localStorage.removeItem(STORAGE_KEYS.CURRENT_USER); setCurrentUser(null); }}
+                            updateDescription={updateUserDescription}
+                            updateAvatar={updateUserAvatar}
+                        />
+                    )}
+                    {showAddContact && (
+                        <AddContactModal
+                            onClose={() => setShowAddContact(false)}
+                            onAdd={(pid, name) => {
+                                const nc = { id: uuid.v4(), type: 'contact', user: { id: pid, name, username: name, peerId: pid, status: 'offline', description: '' }, lastMessage: 'Новый контакт', lastMessageTime: Date.now(), unreadCount: 0 };
+                                setChats(prev => [nc, ...prev]);
+                                if (myPeer) myPeer.connect(pid);
+                            }}
+                        />
+                    )}
+                    {forwardDialog && (
+                        <ForwardDialog
+                            msg={forwardDialog}
+                            chats={[...chats, ...archived]}
+                            onClose={() => setForwardDialog(null)}
+                            onForward={(cid) => {
+                                const nm = { ...forwardDialog, id: uuid.v4(), isSelf: true, status: 'sent' };
+                                saveMsg(cid, nm);
+                                setForwardDialog(null);
+                            }}
+                        />
+                    )}
+                    {infoModal && (
+                        <InfoModal
+                            chat={infoModal}
+                            currentUser={currentUser}
+                            onClose={() => setInfoModal(null)}
+                            onKickMember={(memberId) => kickMember(infoModal.id, memberId)}
+                        />
+                    )}
+                    {callDialog && (
+                        <CallModal
+                            dialog={callDialog}
+                            onAnswer={() => answerCall(callDialog)}
+                            onDecline={() => {
+                                if (callDialog.call) callDialog.call.close();
+                                if (callDialog.stream) callDialog.stream.getTracks().forEach(t => t.stop());
+                                setCallDialog(null);
+                            }}
+                        />
+                    )}
+                    {joinDialog && (
+                        <JoinModal
+                            onClose={() => setJoinDialog(false)}
+                            onJoin={joinByPeerId}
+                            joinId={joinId}
+                            setJoinId={setJoinId}
+                        />
+                    )}
+                </div>
+            );
+        };
+
+        const AuthScreen = ({ onLogin }) => {
+            const [isLogin, setIsLogin] = useState(true);
+            const [username, setUsername] = useState('');
+            const [name, setName] = useState('');
+            const [password, setPassword] = useState('');
+            const handle = () => {
+                let users = storage.getUsers();
+                if (isLogin) {
+                    const u = users.find(u => u.username === username && u.password === password);
+                    if (u) { storage.setCurrentUser(u); onLogin(u); } else alert('Неверные данные');
+                } else {
+                    if (users.find(u => u.username === username)) alert('Юзернейм занят');
+                    else {
+                        const nu = { id: uuid.v4(), username, name, password, avatar: null, status: 'online', description: '' };
+                        users.push(nu);
+                        storage.saveUsers(users);
+                        storage.setCurrentUser(nu);
+                        // Создаём чат с ботом только если его ещё нет
+                        const exist = storage.getChats();
+                        if (!exist.some(c => c.user.peerId === 'eeesheri_bot')) {
+                            const ec = { id: uuid.v4(), type: 'bot', user: { id: 'eeesheri_bot', name: 'Eeesheri AI', username: 'eeesheri', peerId: 'eeesheri_bot', status: 'online', description: 'ИИ-помощник' }, lastMessage: 'Привет! Я Eeesheri, твой кибер-помощник 💚', lastMessageTime: Date.now(), unreadCount: 0 };
+                            storage.setChats([ec, ...exist]);
+                        }
+                        onLogin(nu);
+                    }
+                }
+            };
+            return (
+                <div className="h-screen flex items-center justify-center bg-[#0a0c12]">
+                    <div className="bg-[#11141c] p-8 rounded-2xl w-96 border border-[#00ffc3]/30">
+                        <h1 className="text-3xl font-bold text-center text-[#00ffc3] mb-6">{t.appName}</h1>
+                        <input className="w-full bg-black/50 rounded px-4 py-2 mb-3" placeholder={t.username} value={username} onChange={e => setUsername(e.target.value)} />
+                        {!isLogin && <input className="w-full bg-black/50 rounded px-4 py-2 mb-3" placeholder={t.name} value={name} onChange={e => setName(e.target.value)} />}
+                        <input type="password" className="w-full bg-black/50 rounded px-4 py-2 mb-3" placeholder={t.password} value={password} onChange={e => setPassword(e.target.value)} />
+                        <button onClick={handle} className="w-full bg-[#00ffc3] text-black font-bold py-2 rounded mb-3">{isLogin ? t.login : t.register}</button>
+                        <p className="text-center cursor-pointer text-gray-400" onClick={() => setIsLogin(!isLogin)}>{isLogin ? t.noAccount : t.haveAccount}</p>
+                    </div>
+                </div>
+            );
+        };
+
+        const ProfileDrawer = ({ user, peerId, chats, onClose, geminiKey, setGeminiKey, onLogout, updateDescription, updateAvatar }) => {
+            const [copied, setCopied] = useState(false);
+            const [media, setMedia] = useState([]);
+            const [editDesc, setEditDesc] = useState(false);
+            const [descText, setDescText] = useState(user.description || '');
+            useEffect(() => {
+                let m = [];
+                chats.forEach(c => {
+                    const msgs = storage.getMessages(c.id);
+                    m.push(...msgs.filter(m => m.image).map(m => ({ ...m, chatName: c.user.name })));
+                });
+                setMedia(m);
+            }, [chats]);
+            const copy = () => { navigator.clipboard.writeText(peerId || ''); setCopied(true); setTimeout(() => setCopied(false), 2000); };
+            return (
+                <div className="fixed right-0 top-0 w-96 h-full bg-[#11141c] z-50 p-4 overflow-auto border-l border-[#00ffc3]">
+                    <div className="flex justify-between"><h2>{t.settings}</h2><button onClick={onClose}>✖️</button></div>
+                    <div className="flex flex-col items-center mt-4">
+                        <Avatar user={user} size={20} editable={true} onEdit={() => { const input = document.createElement('input'); input.type='file'; input.accept='image/*'; input.onchange=e => updateAvatar(e.target.files[0]); input.click(); }} />
+                        <div className="font-bold mt-2">{user.name}</div>
+                        <div className="text-gray-400">@{user.username}</div>
+                        <div className="mt-2 text-center text-sm text-gray-300">
+                            {user.description ? user.description : <span className="text-gray-500">{t.bio}</span>}
+                            <button onClick={() => setEditDesc(true)} className="ml-2 text-xs text-[#00ffc3]">✏️</button>
+                        </div>
+                        {editDesc && (
+                            <div className="mt-2 flex gap-2">
+                                <input className="bg-black/50 rounded px-2 py-1 text-sm" value={descText} onChange={e => setDescText(e.target.value)} />
+                                <button onClick={() => { updateDescription(descText); setEditDesc(false); }} className="bg-[#00ffc3] text-black px-2 rounded text-xs">{t.save}</button>
+                            </div>
+                        )}
+                    </div>
+                    <div className="mt-4 p-3 bg-black/30 rounded">
+                        <div className="text-sm text-gray-400">{t.yourPeerId}</div>
+                        <div className="flex gap-2 items-center">
+                            <code className="text-xs bg-black/50 px-2 py-1 rounded break-all flex-1">{peerId || 'Загрузка...'}</code>
+                            <button onClick={copy} className="bg-[#00ffc3]/20 text-[#00ffc3] px-2 py-1 rounded text-xs">{copied ? t.copied : t.copyPeerId}</button>
+                        </div>
+                    </div>
+                    <div className="mt-4">
+                        <label>API ключ Gemini</label>
+                        <input className="w-full bg-black/50 rounded px-2 py-1" value={geminiKey} onChange={e => setGeminiKey(e.target.value)} />
+                        <div className="mt-2 text-xs text-gray-400">
+                            <div className="text-[#00ffc3]">{t.geminiTutorial}</div>
+                            <div>1. <a href={t.geminiLink} target="_blank" className="text-[#00ffc3] underline">{t.geminiLink}</a></div>
+                            <div>2. Войдите в Google-аккаунт</div>
+                            <div>3. Нажмите "Get API key" → "Create API key"</div>
+                            <div>4. Скопируйте ключ и вставьте выше</div>
+                        </div>
+                    </div>
+                    <div className="mt-4"><h3>{t.sharedMedia}</h3><div className="grid grid-cols-3 gap-1 mt-2">{media.map((m, i) => m.image && <img key={i} src={m.image} className="w-full h-20 object-cover rounded" />)}</div></div>
+                    <button onClick={onLogout} className="mt-4 bg-red-500 px-3 py-1 rounded">{t.logout}</button>
+                </div>
+            );
+        };
+
+        const AddContactModal = ({ onClose, onAdd }) => {
+            const [pid, setPid] = useState('');
+            const [name, setName] = useState('');
+            return (
+                <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+                    <div className="bg-[#11141c] p-6 rounded-xl w-96">
+                        <h3>{t.addContact}</h3>
+                        <input placeholder="Peer ID" className="w-full bg-black/50 rounded px-3 py-2 mt-2" value={pid} onChange={e => setPid(e.target.value)} />
+                        <input placeholder={t.name} className="w-full bg-black/50 rounded px-3 py-2 mt-2" value={name} onChange={e => setName(e.target.value)} />
+                        <div className="flex justify-end mt-4 gap-2"><button onClick={onClose}>{t.cancel}</button><button onClick={() => { onAdd(pid, name); onClose(); }} className="bg-[#00ffc3] text-black px-4 py-1 rounded">{t.addContact}</button></div>
+                    </div>
+                </div>
+            );
+        };
+
+        const ForwardDialog = ({ msg, chats, onClose, onForward }) => (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+                <div className="bg-[#11141c] p-4 rounded-xl w-96 max-h-80 overflow-auto">
+                    <h3 className="mb-2">{t.forwardTo}</h3>
+                    {chats.map(c => <div key={c.id} onClick={() => onForward(c.id)} className="p-2 hover:bg-white/10 cursor-pointer rounded flex items-center"><Avatar user={c.user} size={8} /><span className="ml-2">{c.user.name}</span></div>)}
+                    <button onClick={onClose} className="mt-3 text-gray-400">{t.cancel}</button>
+                </div>
+            </div>
+        );
+
+        const InfoModal = ({ chat, currentUser, onClose, onKickMember }) => {
+            const [members, setMembers] = useState(chat.members || []);
+            const copyPeerId = () => { navigator.clipboard.writeText(chat.user.peerId); alert(t.copied); };
+            const [memberNames, setMemberNames] = useState({});
+            useEffect(() => {
+                const users = storage.getUsers();
+                const names = {};
+                members.forEach(mid => {
+                    const user = users.find(u => u.id === mid);
+                    names[mid] = user ? user.name : mid.slice(0,8);
+                });
+                setMemberNames(names);
+            }, [members]);
+            const isAdmin = chat.admin === currentUser?.id;
+            return (
+                <div className="modal-overlay" onClick={onClose}>
+                    <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+                        <h3 className="text-lg font-bold text-[#00ffc3] mb-3">{t.info}</h3>
+                        <div className="space-y-3">
+                            <div><div className="text-gray-400 text-xs">{t.name}</div><div className="font-medium">{chat.user.name}</div></div>
+                            <div><div className="text-gray-400 text-xs">{t.yourPeerId}</div><div className="flex items-center gap-2"><code className="text-xs bg-black/50 px-2 py-1 rounded break-all flex-1">{chat.user.peerId}</code><button onClick={copyPeerId} className="bg-[#00ffc3]/20 text-[#00ffc3] px-2 py-1 rounded text-xs">{t.copyPeerId}</button></div></div>
+                            {chat.user.description && <div><div className="text-gray-400 text-xs">{t.description}</div><div className="text-sm">{chat.user.description}</div></div>}
+                            {chat.isGroup && (
+                                <div>
+                                    <div className="text-gray-400 text-xs">{t.members} ({members.length})</div>
+                                    <div className="max-h-32 overflow-y-auto space-y-1 mt-1">
+                                        {members.map(mid => (
+                                            <div key={mid} className="flex justify-between items-center text-sm">
+                                                <span>{memberNames[mid] || mid}</span>
+                                                {isAdmin && mid !== currentUser.id && (
+                                                    <button onClick={() => onKickMember(mid)} className="text-red-400 text-xs">{t.kick}</button>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {chat.isChannel && <div><div className="text-gray-400 text-xs">{t.channel}</div><div className="text-sm">{chat.admin === currentUser?.id ? t.admin : t.member}</div></div>}
+                        </div>
+                        <button onClick={onClose} className="mt-4 w-full bg-[#00ffc3] text-black py-1 rounded">{t.cancel}</button>
+                    </div>
+                </div>
+            );
+        };
+
+        const JoinModal = ({ onClose, onJoin, joinId, setJoinId }) => (
+            <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50">
+                <div className="bg-[#11141c] p-6 rounded-xl w-96">
+                    <h3 className="mb-2">{t.joinByPeerId}</h3>
+                    <input placeholder={t.peerIdPlaceholder} className="w-full bg-black/50 rounded px-3 py-2 mt-2" value={joinId} onChange={e => setJoinId(e.target.value)} />
+                    <div className="flex justify-end mt-4 gap-2">
+                        <button onClick={onClose}>{t.cancel}</button>
+                        <button onClick={onJoin} className="bg-[#00ffc3] text-black px-4 py-1 rounded">{t.join}</button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        const CallModal = ({ dialog, onAnswer, onDecline }) => (
+            <div className="call-modal">
+                <div className="call-card">
+                    <h3 className="text-xl mb-2">{dialog.type === 'incoming' ? t.answer : t.call}</h3>
+                    <div className="flex gap-4 justify-center">
+                        <button onClick={onAnswer} className="bg-green-500 px-4 py-2 rounded">{t.answer}</button>
+                        <button onClick={onDecline} className="bg-red-500 px-4 py-2 rounded">{t.decline}</button>
+                    </div>
+                </div>
+            </div>
+        );
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
